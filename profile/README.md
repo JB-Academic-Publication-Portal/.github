@@ -10,915 +10,484 @@
 [![Storage](https://img.shields.io/badge/Storage-MinIO-red)](https://min.io/)
 
 ---
-
 ## Table of Contents
 
 - [Overview](#overview)
+- [Repository Structure](#repository-structure)
 - [Technology Stack](#technology-stack)
-- [System Roles](#system-roles)
-- [Core System Modules](#core-system-modules)
-  - [1. User Management and Authentication](#1-user-management-and-authentication)
-  - [2. Submission Management](#2-submission-management)
-  - [3. Review Workflow](#3-review-workflow)
-  - [4. Publication and Repository](#4-publication-and-repository)
-  - [5. Search and Discovery](#5-search-and-discovery)
-  - [6. AI-Based Document Processing](#6-ai-based-document-processing)
-- [System Architecture](#system-architecture)
-- [Entity Relationship Diagram](#entity-relationship-diagram)
-- [Deployment Architecture](#deployment-architecture)
-- [Development Approach](#development-approach)
+- [Implemented Roles and Permissions](#implemented-roles-and-permissions)
+- [Implemented Workflow](#implemented-workflow)
+- [Core Domain Model (Implemented)](#core-domain-model-implemented)
+- [Database Schema (Implemented)](#database-schema-implemented)
+- [API Snapshot](#api-snapshot)
+- [Runtime Configuration](#runtime-configuration)
+- [Architecture](#architecture)
+- [Current Scope and Gaps](#current-scope-and-gaps)
 
 ---
 
 ## Overview
 
-The **Academic Research and Project Submission Portal** is a web-based platform designed to manage the submission, review, and publication of academic work within a college environment.
+The **JB Academic Publication Portal** is a multi-service platform for:
 
-The system supports multiple categories of academic output including:
+- Institutional user onboarding (students/faculty/admin)
+- Project group and academic hierarchy mapping (Guide, Coordinator, HOD)
+- Submission upload and tracking
+- Multi-stage approval workflow
+- Publication and discovery with semantic search + Q&A
 
-- Research Papers
-- Major Project Reports
-- Mini Project Reports
-- Internship Reports
+---
 
-The platform provides a structured workflow where:
+## Repository Structure
 
-1. **Students** submit academic work.
-2. **Faculty members** review the submissions.
-3. **Administrators or Heads of Department** make final decisions.
-4. Approved submissions are **published** in a public academic repository.
-
-The system also includes a dedicated **AI document processing service** responsible for PDF validation, text extraction, and semantic indexing to improve document discovery and analysis.
+- `frontend-web`: Next.js application (App Router, JavaScript)
+- `server-base`: Spring Boot backend (Java + Kotlin), auth, workflow, storage integration
+- `research-intelligence-service`: FastAPI RAG service (document processing, semantic retrieval, Q&A)
 
 ---
 
 ## Technology Stack
 
 | Layer | Technology |
-|-------|------------|
-| Frontend | Next.js with TypeScript |
-| Backend | Spring Boot (Java + Kotlin) |
-| AI Service | Python FastAPI with Retrieval-Augmented Generation (RAG) |
-| Database | PostgreSQL with pgvector extension |
-| File Storage | MinIO (S3-compatible object storage) |
+|---|---|
+| Frontend | Next.js 16 + React 19 (JavaScript) |
+| Backend API | Spring Boot 4.0.3 (Java 21), Kotlin (Exposed table bootstrap) |
+| Auth/Security | `security-starter` + JWT |
+| DB | PostgreSQL |
+| Object Storage | MinIO |
+| AI Service | FastAPI + LangChain PGVector + sentence-transformers + Groq LLM |
 
 ---
 
-## System Roles
+## Implemented Roles and Permissions
 
-The platform defines four primary roles.
+### Role Enum (`RoleType`)
 
-| Role | Description |
-|------|-------------|
-| **Guest** | Browse and access published academic content without authentication |
-| **Student** | Submit academic work, track progress, view feedback, and submit revisions |
-| **Faculty Reviewer** | Evaluate assigned submissions, provide feedback, and recommend decisions |
-| **Admin / HOD** | Manage users, assign reviewers, make final decisions, and publish approved work |
+- `USER`
+- `STUDENT`
+- `FACULTY`
+- `GUIDE`
+- `PROJECT_COORDINATOR`
+- `HOD`
+- `ADMIN`
 
-### Use Case Diagram
+### Effective Permission Mapping (from `SecurityConstants`)
 
-```mermaid
-graph TB
-    subgraph "Guest Actions"
-        Browse["Browse Publications"]
-        Search["Search Publications"]
-        View["View Paper Details"]
-        Download["Download Documents"]
-    end
-
-    subgraph "Student Actions"
-        Submit["Submit Academic Work"]
-        Upload["Upload Documents"]
-        Track["Track Submission Status"]
-        Feedback["View Reviewer Feedback"]
-        Revise["Submit Revisions"]
-    end
-
-    subgraph "Reviewer Actions"
-        Review["Evaluate Submissions"]
-        Score["Score Submission"]
-        Recommend["Recommend Decision"]
-    end
-
-    subgraph "Admin Actions"
-        Users["Manage Users"]
-        Assign["Assign Reviewers"]
-        Decision["Make Final Decision"]
-        Publish["Publish Approved Work"]
-        BulkImport["Bulk Import Users"]
-    end
-
-    Guest["Guest"] --> Browse
-    Guest --> Search
-    Guest --> View
-    Guest --> Download
-
-    Student["Student"] --> Submit
-    Student --> Upload
-    Student --> Track
-    Student --> Feedback
-    Student --> Revise
-
-    Reviewer["Faculty Reviewer"] --> Review
-    Reviewer --> Score
-    Reviewer --> Recommend
-
-    Admin["Admin / HOD"] --> Users
-    Admin --> Assign
-    Admin --> Decision
-    Admin --> Publish
-    Admin --> BulkImport
-```
+- `STUDENT`: `submission:create`, `submission:read:own`
+- `FACULTY`: `submission:read`
+- `GUIDE`: `submission:read`, `submission:approve:guide`
+- `PROJECT_COORDINATOR`: `submission:read`, `submission:approve:coordinator`, `submission:publish`
+- `HOD`: `submission:read`, `submission:approve:hod`, `submission:publish`
+- `ADMIN`: `user:manage`, `submission:read`, `submission:manage`, `group:manage`, `coordinator:manage`, `hod:manage`
+- `USER`: `submission:read`
 
 ---
 
-## Core System Modules
+## Implemented Workflow
 
----
+### Submission Categories (`SubmissionCategory`)
 
-### 1. User Management and Authentication
+- `RESEARCH_PAPER`
+- `MAJOR_PROJECT_REPORT`
+- `MINI_PROJECT_REPORT`
+- `INTERNSHIP_REPORT`
 
-The platform provides a centralized authentication and user management system.
+### Submission Status (`SubmissionStatus`)
 
-**Key capabilities include:**
+- `DRAFT`
+- `SUBMITTED`
+- `PENDING_GUIDE_APPROVAL`
+- `PENDING_COORDINATOR_APPROVAL`
+- `PENDING_HOD_APPROVAL`
+- `APPROVED_FOR_PUBLICATION`
+- `REJECTED`
+- `PUBLISHED`
 
-- Institutional account creation using roll number and institutional email
-- Secure authentication using Spring Security and JWT
-- Role-based access control
-- Password change requirement during first login
-- Profile management for students and faculty
-- Administrative user management
-- Bulk import of student accounts using CSV
-
-#### Class Diagram — User Management
-
-```mermaid
-classDiagram
-    class User {
-        +Long id
-        +String email
-        +String passwordHash
-        +String rollNumber
-        +Role role
-        +Boolean firstLogin
-        +Boolean isActive
-        +DateTime createdAt
-        +DateTime updatedAt
-    }
-
-    class StudentProfile {
-        +Long id
-        +String fullName
-        +String department
-        +String batch
-        +String academicYear
-        +String phone
-    }
-
-    class FacultyProfile {
-        +Long id
-        +String fullName
-        +String department
-        +String designation
-        +String specialization
-    }
-
-    class Role {
-        <<enumeration>>
-        GUEST
-        STUDENT
-        FACULTY_REVIEWER
-        ADMIN
-    }
-
-    User "1" --> "1" Role
-    User "1" --> "0..1" StudentProfile
-    User "1" --> "0..1" FacultyProfile
-```
-
-#### Sequence Diagram — Authentication Flow
-
-```mermaid
-sequenceDiagram
-    actor Student
-    participant Frontend as Next.js Frontend
-    participant Backend as Spring Boot Backend
-    participant DB as PostgreSQL
-    participant JWT as JWT Service
-
-    Student->>Frontend: Enter credentials
-    Frontend->>Backend: POST /api/auth/login
-    Backend->>DB: Validate credentials
-    DB-->>Backend: User record
-
-    alt Authentication Success
-        Backend->>DB: Check firstLogin flag
-
-        alt First Login
-            Backend-->>Frontend: Require password change
-            Student->>Frontend: Enter new password
-            Frontend->>Backend: POST /api/auth/change-password
-            Backend->>DB: Update password
-            Backend->>JWT: Generate tokens
-            JWT-->>Backend: Access + Refresh tokens
-            Backend-->>Frontend: 200 OK + tokens
-        else Regular Login
-            Backend->>JWT: Generate tokens
-            JWT-->>Backend: Access + Refresh tokens
-            Backend-->>Frontend: 200 OK + tokens
-        end
-
-        Frontend-->>Student: Redirect to dashboard
-    else Authentication Failure
-        Backend-->>Frontend: 401 Unauthorized
-        Frontend-->>Student: Show error message
-    end
-```
-
----
-
-### 2. Submission Management
-
-The submission module allows students to upload and manage academic work.
-
-**Supported categories:**
-
-| Category | Description |
-|----------|-------------|
-| Research Paper | Original research contributions |
-| Major Project Report | Final year or capstone project reports |
-| Mini Project Report | Smaller scope academic projects |
-| Internship Report | Industry internship documentation |
-
-**Each submission includes:**
-
-- Title, abstract, and keywords
-- Author information
-- Department and academic year
-- Uploaded PDF document
-- Optional supplementary files (source code, GitHub links, images, videos)
-
-**Additional features:**
-
-- Draft saving before final submission
-- Version tracking for revised submissions
-- Unique submission identifiers for tracking
-
-#### Submission Lifecycle
+### Current Approval Flow (as implemented in services)
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Draft : Student creates submission
+    [*] --> SUBMITTED : Student creates submission
 
-    Draft --> Draft : Save draft
-    Draft --> Submitted : Student submits
+    SUBMITTED --> PENDING_COORDINATOR_APPROVAL : Guide approves
+    PENDING_COORDINATOR_APPROVAL --> PENDING_HOD_APPROVAL : Coordinator approves
+    PENDING_HOD_APPROVAL --> APPROVED_FOR_PUBLICATION : HOD approves
+    APPROVED_FOR_PUBLICATION --> PUBLISHED : Publish action
 
-    Submitted --> UnderReview : Admin assigns reviewers
-
-    UnderReview --> RevisionRequested : Reviewers recommend revisions
-    UnderReview --> Accepted : Admin accepts
-    UnderReview --> Rejected : Admin rejects
-
-    RevisionRequested --> Revised : Student submits revision
-    Revised --> UnderReview : Admin re-assigns for review
-
-    Accepted --> Published : Admin publishes
-
-    Published --> [*]
-    Rejected --> [*]
+    SUBMITTED --> REJECTED : Guide rejects
+    PENDING_COORDINATOR_APPROVAL --> REJECTED : Coordinator rejects
+    PENDING_HOD_APPROVAL --> REJECTED : HOD rejects
 ```
 
-#### Class Diagram — Submission
+Notes:
+
+- New submissions are currently created with `SUBMITTED` status.
+- `DRAFT` and `PENDING_GUIDE_APPROVAL` are present in enum and query logic but not set by current create flow.
+
+---
+
+## Core Domain Model (Implemented)
+
+### JPA Entity Model
 
 ```mermaid
 classDiagram
-    class Submission {
+    class Users {
+        +String id (UUID)
+        +String name
+        +String username
+        +String password
+        +String email
+        +Set<Role> roles
+        +Set<String> permissions
+        +LocalDateTime createdAt
+        +LocalDateTime updatedAt
+    }
+
+    class Student {
+        +String rollNumber
+        +String academicYear
+        +String section
+        +String department
+        +String course
+        +boolean firstLogin
+        +boolean isActive
+    }
+
+    class Faculty {
+        +String facultyId
+        +String department
+        +String course
+    }
+
+    class Admin {
+        +String department
+    }
+
+    class Role {
         +Long id
-        +String submissionId
+        +RoleType roleType
+    }
+
+    class ProjectGroup {
+        +String id (UUID)
+        +String groupId
+        +String department
+        +String section
+        +String academicYear
+        +String course
+    }
+
+    class Coordinator {
+        +Long id
+        +String department
+        +String section
+    }
+
+    class HOD {
+        +Long id
+        +String department
+    }
+
+    class Submission {
+        +String id (UUID)
         +String title
-        +String abstractText
+        +String doi
+        +String keywords
         +SubmissionCategory category
         +SubmissionStatus status
         +String department
         +String academicYear
-        +DateTime createdAt
-        +DateTime updatedAt
-    }
-
-    class SubmissionCategory {
-        <<enumeration>>
-        RESEARCH_PAPER
-        MAJOR_PROJECT_REPORT
-        MINI_PROJECT_REPORT
-        INTERNSHIP_REPORT
-    }
-
-    class SubmissionStatus {
-        <<enumeration>>
-        DRAFT
-        SUBMITTED
-        UNDER_REVIEW
-        REVISION_REQUESTED
-        REVISED
-        ACCEPTED
-        REJECTED
-        PUBLISHED
-    }
-
-    class Document {
-        +Long id
+        +String objectKey
         +String fileName
-        +String fileType
         +Long fileSize
-        +String minioObjectKey
-        +Integer versionNumber
-        +DateTime uploadedAt
-    }
-
-    class SupplementaryFile {
-        +Long id
-        +String fileName
-        +String fileType
-        +String url
-        +String description
-    }
-
-    Submission "1" --> "1..*" Document : contains
-    Submission "1" --> "0..*" SupplementaryFile : includes
-    Submission "1" --> "1" SubmissionCategory
-    Submission "1" --> "1" SubmissionStatus
-```
-
----
-
-### 3. Review Workflow
-
-The system implements a structured academic review workflow.
-
-**Workflow steps:**
-
-1. A student submits academic work.
-2. The administrator assigns one or more faculty reviewers.
-3. Reviewers evaluate the submission and provide feedback.
-4. Reviewers recommend a decision.
-5. The administrator makes the final decision.
-
-**Possible decisions:**
-
-| Decision | Description |
-|----------|-------------|
-| **Accept** | Submission is approved for publication |
-| **Revision Required** | Student must address feedback and resubmit |
-| **Reject** | Submission is not accepted |
-
-#### Review Workflow Diagram
-
-```mermaid
-sequenceDiagram
-    actor Student
-    actor Admin as Admin / HOD
-    actor Reviewer as Faculty Reviewer
-    participant Backend as Spring Boot Backend
-    participant DB as PostgreSQL
-
-    Student->>Backend: Submit academic work
-    Backend->>DB: Save submission (status: SUBMITTED)
-    Backend-->>Admin: Notify new submission
-
-    Admin->>Backend: Assign reviewer(s)
-    Backend->>DB: Create review assignment(s)
-    Backend->>DB: Update status to UNDER_REVIEW
-    Backend-->>Reviewer: Notify assignment
-
-    Reviewer->>Backend: Fetch submission details
-    Backend-->>Reviewer: Return submission and documents
-
-    Reviewer->>Backend: Submit review (feedback + score + decision)
-    Backend->>DB: Save review
-    Backend-->>Admin: Notify review completed
-
-    alt Decision: Accept
-        Admin->>Backend: Accept submission
-        Backend->>DB: Update status to ACCEPTED
-        Backend-->>Student: Notify acceptance
-    else Decision: Revision Required
-        Admin->>Backend: Request revisions
-        Backend->>DB: Update status to REVISION_REQUESTED
-        Backend-->>Student: Notify revision needed
-        Student->>Backend: Submit revised version
-        Backend->>DB: Save new version (status: REVISED)
-        Note over Admin, Reviewer: Re-review cycle begins
-    else Decision: Reject
-        Admin->>Backend: Reject submission
-        Backend->>DB: Update status to REJECTED
-        Backend-->>Student: Notify rejection
-    end
-```
-
-#### Class Diagram — Review System
-
-```mermaid
-classDiagram
-    class ReviewAssignment {
-        +Long id
-        +Long submissionId
-        +Long reviewerId
-        +String status
-        +DateTime assignedAt
-        +DateTime completedAt
-    }
-
-    class Review {
-        +Long id
-        +Long assignmentId
-        +String feedbackComments
-        +Integer overallScore
-        +String recommendedDecision
-        +DateTime submittedAt
-    }
-
-    class ReviewDecision {
-        <<enumeration>>
-        ACCEPT
-        REVISION_REQUIRED
-        REJECT
-    }
-
-    class EditorialDecision {
-        +Long id
-        +Long submissionId
-        +Long adminId
-        +String finalDecision
-        +String comments
-        +DateTime decidedAt
-    }
-
-    ReviewAssignment "1" --> "0..1" Review : produces
-    Review --> ReviewDecision : recommends
-    EditorialDecision --> ReviewDecision : decides
-    Submission "1" --> "1..*" ReviewAssignment : assigned for
-    Submission "1" --> "0..1" EditorialDecision : decided by
-```
-
----
-
-### 4. Publication and Repository
-
-Submissions that are accepted are published in the institutional repository.
-
-**Published records include:**
-
-- Title and author information
-- Abstract and keywords
-- Downloadable PDF document
-- Publication date
-- View and download counts
-
-**Content can be browsed by:**
-
-- Department
-- Academic year
-- Submission category
-- Author name
-
-#### Class Diagram — Publication
-
-```mermaid
-classDiagram
-    class Publication {
-        +Long id
-        +Long submissionId
-        +String title
-        +String abstractText
-        +String department
-        +String academicYear
-        +String category
-        +DateTime publishedAt
-    }
-
-    class PublicationMetrics {
-        +Long id
-        +Long publicationId
         +Long viewCount
         +Long downloadCount
-        +DateTime lastAccessedAt
+        +LocalDateTime createdAt
+        +LocalDateTime updatedAt
     }
 
-    Publication "1" --> "1" PublicationMetrics : tracked by
-    Publication "1" --> "1" Submission : derived from
-```
-
----
-
-### 5. Search and Discovery
-
-The portal includes a search system for discovering academic content.
-
-**Capabilities include:**
-
-- Full-text search across indexed documents
-- Filtering by department, year, author, or category
-- Keyword-based discovery
-- Ranked search results by relevance
-
-The search system uses **PostgreSQL full-text search** with semantic enhancement from the AI service.
-
-#### Search Flow Diagram
-
-```mermaid
-flowchart TD
-    A([User initiates search]) --> B{Search Type?}
-
-    B -->|Full-Text| C[Enter search query]
-    B -->|Filtered Browse| D[Select filters]
-    B -->|Keyword| E[Click keyword tag]
-
-    C --> F[Send query to backend]
-    D --> F
-    E --> F
-
-    F --> G{Semantic Search Enabled?}
-
-    G -->|Yes| H[FastAPI: Generate query embedding]
-    G -->|No| I[PostgreSQL: Full-text search]
-
-    H --> J[pgvector: Cosine similarity search]
-    J --> K[Combine and rank results]
-    I --> K
-
-    K --> L[Return paginated results]
-
-    L --> M{User action?}
-    M -->|View Details| N[Display publication]
-    M -->|Download| O[Fetch from MinIO]
-    M -->|Refine| B
-    M -->|Done| P([End])
-```
-
----
-
-### 6. AI-Based Document Processing
-
-Document analysis and semantic processing are handled by a dedicated **Python service built with FastAPI**.  
-This service is responsible for validating uploaded documents, extracting meaningful information, and enabling AI-assisted discovery of academic content.
-
-The AI service operates as an auxiliary component of the backend and is invoked whenever a new document is uploaded or when semantic search is requested.
-
-**Key capabilities include:**
-
-- Validation of uploaded PDF documents (format, integrity, and basic compliance checks)
-- Extraction of textual content and structural metadata from documents
-- Generation of semantic vector embeddings for document content
-- Automatic generation of concise document summaries
-- Support for semantic search and related document recommendations
-
-The generated embeddings are stored in **PostgreSQL using the `pgvector` extension**, allowing efficient vector similarity searches across the document corpus.
-
----
-
-#### AI Processing Pipeline
-
-```mermaid
-sequenceDiagram
-    participant Backend as Spring Boot Backend
-    participant Storage as MinIO Object Storage
-    participant AI as FastAPI AI Service
-    participant DB as PostgreSQL (pgvector)
-
-    Backend->>Storage: Upload PDF document
-    Storage-->>Backend: Return object key
-
-    Backend->>AI: POST /process-document (objectKey)
-
-    AI->>Storage: Retrieve PDF document
-    Storage-->>AI: PDF file
-
-    Note over AI: Document Processing Pipeline
-
-    AI->>AI: Validate PDF format and structure
-    AI->>AI: Extract text content
-    AI->>AI: Extract structural metadata
-    AI->>AI: Generate semantic embeddings
-    AI->>AI: Generate document summary
-
-    AI->>DB: Store extracted metadata
-    AI->>DB: Store vector embeddings (pgvector)
-    AI->>DB: Store generated summary
-
-    AI-->>Backend: Processing completed
-
-    Note over Backend,DB: Semantic Search Workflow
-
-    Backend->>AI: POST /search (query text)
-    AI->>AI: Generate query embedding
-    AI->>DB: Perform vector similarity search
-    DB-->>AI: Return ranked matches
-    AI-->>Backend: Return search results
-```
-
-#### Class Diagram — AI Service
-
-```mermaid
-classDiagram
-    class DocumentProcessor {
-        +processDocument(objectKey, submissionId)
-        -validatePDF(binary)
-        -extractText(binary)
-        -extractStructure(text)
-    }
-
-    class PDFValidator {
-        +validate(binary)
-        +checkFormat()
-        +checkIntegrity()
-    }
-
-    class TextExtractor {
-        +extract(binary)
-        +extractByPage(binary, pageNum)
-    }
-
-    class EmbeddingGenerator {
-        +generateEmbedding(text)
-        +generateChunkEmbeddings(chunks)
-        +chunkText(text, chunkSize, overlap)
-    }
-
-    class SummaryGenerator {
-        +generateSummary(text)
-        +generateAbstract(text)
-    }
-
-    class SemanticSearchService {
-        +search(queryText, filters)
-        +findRelatedDocuments(submissionId, topK)
-    }
-
-    class DocumentEmbedding {
+    class OrganizationConfig {
         +Long id
-        +Long submissionId
-        +String chunkText
-        +int chunkIndex
-        +vector embedding
-        +DateTime createdAt
+        +String configType
+        +String value
+        +Boolean isActive
+        +String displayName
+        +Integer sortOrder
     }
 
-    DocumentProcessor --> PDFValidator
-    DocumentProcessor --> TextExtractor
-    DocumentProcessor --> EmbeddingGenerator
-    DocumentProcessor --> SummaryGenerator
-    EmbeddingGenerator ..> DocumentEmbedding : produces
-    SemanticSearchService --> EmbeddingGenerator
+    Users <|-- Student
+    Users <|-- Faculty
+    Users <|-- Admin
+
+    Users "*" -- "*" Role : user_roles
+    Student "0..*" --> "0..1" ProjectGroup : belongs_to
+    ProjectGroup "*" --> "1" Faculty : guide
+
+    Coordinator "*" --> "1" Faculty : faculty
+    HOD "*" --> "1" Faculty : hod
+
+    Submission "*" --> "1" Users : author
+    Submission "*" --> "0..1" Faculty : guide
+    Submission "*" --> "0..1" Faculty : coordinator
+    Submission "*" --> "0..1" Faculty : hod
 ```
 
 ---
 
-## System Architecture
+## Database Schema (Implemented)
 
-The system follows a modular architecture consisting of a web frontend, a backend application, and a specialized document processing service.
+The backend currently uses:
 
-```mermaid
-graph TB
-    Browser["Client Browser"]
+1. **JPA/Hibernate tables** for application domain entities
+2. **Exposed-managed tables** for review/publication support tables
+3. **RI service PGVector tables** for semantic indexing
 
-    subgraph "Presentation Layer"
-        Frontend["Next.js Frontend (TypeScript)"]
-    end
+### 1) JPA/Hibernate Tables
 
-    subgraph "Application Layer"
-        Backend["Spring Boot Backend (Java + Kotlin)"]
-    end
+| Table | Purpose |
+|---|---|
+| `users` | Base user account entity |
+| `student` | Student-specific fields (joined inheritance, FK to `users.id`) |
+| `faculty` | Faculty-specific fields (joined inheritance, FK to `users.id`) |
+| `admins` | Admin-specific fields (joined inheritance, FK to `users.id`) |
+| `roles` | Role master (`RoleType`) |
+| `user_roles` | Many-to-many relation between users and roles |
+| `user_permissions` | Explicit per-user permissions |
+| `project_groups` | Group metadata + assigned guide |
+| `coordinator` | Department+section coordinator mapping to faculty |
+| `hod` | Department to HOD mapping |
+| `organization_config` | Configured DEPARTMENT/COURSE/SECTION values |
+| `submissions` | Submission records, workflow status, storage metadata, counters |
 
-    subgraph "AI Processing Layer"
-        AI["FastAPI AI Service (Python)"]
-    end
+### 2) Exposed-Managed Tables (`server-base/src/main/kotlin/.../Tables.kt`)
 
-    subgraph "Data Layer"
-        DB[("PostgreSQL + pgvector")]
-        Storage[("MinIO Object Storage")]
-    end
+| Table | Key columns |
+|---|---|
+| `documents` | `submission_id`, file metadata, `version_number` |
+| `supplementary_files` | `submission_id`, file/url metadata |
+| `review_assignments` | `submission_id`, `reviewer_id`, status/timestamps |
+| `reviews` | `assignment_id`, comments, score, decision |
+| `editorial_decisions` | `submission_id`, `admin_id`, final decision |
+| `publications` | publication metadata derived from submissions |
+| `publication_metrics` | view/download counters per publication |
 
-    Browser <-->|HTTPS| Frontend
-    Frontend <-->|REST API| Backend
+### 3) RI Service Semantic Store
 
-    Backend --> DB
-    Backend --> Storage
-    Backend <-->|REST API| AI
+| Table | Purpose |
+|---|---|
+| `langchain_pg_embedding` | Chunk embeddings + metadata JSON (`submission_id`, title, author, category, etc.) |
 
-    AI --> DB
-    AI --> Storage
-```
+The RI service ensures PostgreSQL `vector` extension exists during startup.
 
-**Architecture Flow:**
-
-```
-Client Browser
-      │
-      ▼
-Next.js Frontend (TypeScript)
-      │
-      ▼
-Spring Boot Backend (Java + Kotlin)
-      │
-      ├── PostgreSQL (application data + pgvector)
-      ├── MinIO (document storage)
-      └── Python FastAPI Service (document processing + AI)
-```
-
----
-
-## Entity Relationship Diagram
+### ER Diagram (Practical View)
 
 ```mermaid
 erDiagram
-    USER {
+    USERS {
+        uuid id PK
+        string name
+        string username
+        string password
+        string email
+        datetime created_at
+        datetime updated_at
+    }
+
+    ROLES {
         bigint id PK
-        varchar email UK
-        varchar password_hash
-        varchar roll_number UK
-        varchar role
+        string role_type
+    }
+
+    USER_ROLES {
+        uuid user_id FK
+        bigint role_id FK
+    }
+
+    USER_PERMISSIONS {
+        uuid user_id FK
+        string permission
+    }
+
+    STUDENT {
+        uuid id PK
+        string roll_number UK
+        string academic_year
+        string section
+        string dept
+        string course
         boolean first_login
         boolean is_active
-        timestamp created_at
-        timestamp updated_at
+        uuid project_group_id FK
     }
 
-    STUDENT_PROFILE {
-        bigint id PK
-        bigint user_id FK
-        varchar full_name
-        varchar department
-        varchar batch
-        varchar academic_year
-        varchar phone
+    FACULTY {
+        uuid id PK
+        string faculty_id UK
+        string dept
+        string course
     }
 
-    FACULTY_PROFILE {
-        bigint id PK
-        bigint user_id FK
-        varchar full_name
-        varchar department
-        varchar designation
-        varchar specialization
+    ADMINS {
+        uuid id PK
+        string department
     }
 
-    SUBMISSION {
-        bigint id PK
-        varchar submission_id UK
-        varchar title
-        text abstract_text
-        varchar category
-        varchar status
-        bigint author_id FK
-        varchar department
-        varchar academic_year
-        timestamp created_at
-        timestamp updated_at
+    PROJECT_GROUPS {
+        uuid id PK
+        string group_id
+        uuid guide_id FK
+        string department
+        string section
+        string academic_year
+        string course
     }
 
-    DOCUMENT {
+    COORDINATOR {
         bigint id PK
-        bigint submission_id FK
-        varchar file_name
-        varchar file_type
+        string department
+        string section
+        uuid faculty_id FK
+    }
+
+    HOD {
+        bigint id PK
+        string department UK
+        uuid hod_id FK
+    }
+
+    SUBMISSIONS {
+        uuid id PK
+        string title
+        string doi UK
+        uuid author_id FK
+        uuid guide_id FK
+        uuid coordinator_id FK
+        uuid hod_id FK
+        string keywords
+        string category
+        string status
+        string department
+        string academic_year
+        string object_key
+        string file_name
         bigint file_size
-        varchar minio_object_key
-        int version_number
-        timestamp uploaded_at
-    }
-
-    SUPPLEMENTARY_FILE {
-        bigint id PK
-        bigint submission_id FK
-        varchar file_name
-        varchar file_type
-        varchar url
-        text description
-    }
-
-    REVIEW_ASSIGNMENT {
-        bigint id PK
-        bigint submission_id FK
-        bigint reviewer_id FK
-        varchar status
-        timestamp assigned_at
-        timestamp completed_at
-    }
-
-    REVIEW {
-        bigint id PK
-        bigint assignment_id FK
-        text feedback_comments
-        int overall_score
-        varchar recommended_decision
-        timestamp submitted_at
-    }
-
-    EDITORIAL_DECISION {
-        bigint id PK
-        bigint submission_id FK
-        bigint admin_id FK
-        varchar final_decision
-        text comments
-        timestamp decided_at
-    }
-
-    PUBLICATION {
-        bigint id PK
-        bigint submission_id FK
-        varchar title
-        text abstract_text
-        varchar department
-        varchar academic_year
-        varchar category
-        timestamp published_at
-    }
-
-    PUBLICATION_METRICS {
-        bigint id PK
-        bigint publication_id FK
         bigint view_count
         bigint download_count
-        timestamp last_accessed_at
+        datetime created_at
+        datetime updated_at
     }
 
-    DOCUMENT_EMBEDDING {
-        bigint id PK
-        bigint submission_id FK
-        text chunk_text
-        int chunk_index
-        vector embedding
-        timestamp created_at
-    }
+    USERS ||--o{ USER_ROLES : has
+    ROLES ||--o{ USER_ROLES : assigned
+    USERS ||--o{ USER_PERMISSIONS : overrides
 
-    USER ||--o| STUDENT_PROFILE : has
-    USER ||--o| FACULTY_PROFILE : has
-    USER ||--o{ SUBMISSION : authors
-    SUBMISSION ||--o{ DOCUMENT : contains
-    SUBMISSION ||--o{ SUPPLEMENTARY_FILE : includes
-    SUBMISSION ||--o{ REVIEW_ASSIGNMENT : assigned_for
-    REVIEW_ASSIGNMENT ||--o| REVIEW : produces
-    REVIEW_ASSIGNMENT }o--|| USER : reviewer
-    SUBMISSION ||--o| EDITORIAL_DECISION : decided_by
-    EDITORIAL_DECISION }o--|| USER : admin
-    SUBMISSION ||--o| PUBLICATION : published_as
-    PUBLICATION ||--|| PUBLICATION_METRICS : tracked_by
-    SUBMISSION ||--o{ DOCUMENT_EMBEDDING : indexed_with
+    USERS ||--o| STUDENT : extends
+    USERS ||--o| FACULTY : extends
+    USERS ||--o| ADMINS : extends
+
+    PROJECT_GROUPS ||--o{ STUDENT : contains
+    FACULTY ||--o{ PROJECT_GROUPS : guides
+    FACULTY ||--o{ COORDINATOR : assigned_as
+    FACULTY ||--o{ HOD : assigned_as
+
+    USERS ||--o{ SUBMISSIONS : authors
+    FACULTY ||--o{ SUBMISSIONS : reviews_and_approves
 ```
 
 ---
 
-## Deployment Architecture
+## API Snapshot
+
+### Registration and Auth
+
+- `POST /register`
+- `POST /register/student`
+- `POST /register/faculty`
+- `POST /register/admin`
+- `POST /api/auth/change-first-loginPassword` (student first-login password reset)
+
+### Admin Operations
+
+- Student bulk seeding from Excel
+- Add student/faculty
+- Manage project groups
+- Assign section coordinators and department HODs
+- Manage organization config values (`DEPARTMENT`, `COURSE`, `SECTION`)
+
+### Submissions
+
+- Create submission (`multipart`: file + metadata)
+- Fetch all submissions / my submissions / by id
+- Filter by category
+- Track view/download counts
+- Download signed URL from MinIO
+- Semantic search (`/api/submissions/search`)
+- Q&A (`/api/submissions/ask`)
+
+### Review
+
+- Queue endpoints: guide/coordinator/hod
+- Approval endpoints per stage
+- Reject endpoints per stage
+- Publish endpoint
+- Query by status
+
+---
+
+## Runtime Configuration
+
+Key backend environment values:
+
+- `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`
+- `MINIO_URL`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_BUCKET`
+- `RI_SERVICE_URL`
+- `JWT_SECRET`
+- Optional multipart limits: `MAX_FILE_SIZE`, `MAX_REQUEST_SIZE`
+
+Backend default port: `8080`.
+Frontend default port: `3000`.
+RI service default port: `8000`.
+
+---
+
+## Architecture
 
 ```mermaid
 graph TB
-    Users["Users"] -->|HTTPS : 443| LB["Nginx / Reverse Proxy"]
+    Browser[Client Browser]
+    FE[Next.js Frontend]
+    BE[Spring Boot Backend]
+    DB[(PostgreSQL)]
+    MINIO[(MinIO)]
+    RI[FastAPI RI Service]
+    VEC[(PGVector Embeddings)]
 
-    LB -->|Port 3000| NextJS["Next.js Frontend"]
-    NextJS -->|Port 8080| SpringBoot["Spring Boot Backend"]
-
-    SpringBoot -->|Port 5432| PostgreSQL[("PostgreSQL + pgvector")]
-    SpringBoot -->|Port 9000| MinIO[("MinIO Object Storage")]
-    SpringBoot -->|Port 8000| FastAPI["FastAPI AI Service"]
-
-    FastAPI -->|Port 5432| PostgreSQL
-    FastAPI -->|Port 9000| MinIO
+    Browser <-->|HTTPS| FE
+    FE <-->|REST| BE
+    BE --> DB
+    BE --> MINIO
+    BE <-->|REST| RI
+    RI --> MINIO
+    RI --> VEC
 ```
-
-**Port Reference:**
-
-| Service | Port | Protocol |
-|---------|------|----------|
-| Nginx (Reverse Proxy) | 443 | HTTPS |
-| Next.js Frontend | 3000 | HTTP |
-| Spring Boot Backend | 8080 | HTTP |
-| FastAPI AI Service | 8000 | HTTP |
-| PostgreSQL | 5432 | TCP |
-| MinIO API | 9000 | HTTP |
-| MinIO Console | 9001 | HTTP |
 
 ---
 
-## Development Approach
+## Current Scope and Gaps
 
-Development will proceed incrementally with an emphasis on delivering a stable core platform first.
+Implemented now:
 
-**Initial implementation focuses on:**
+- Role-based authentication and user registration flows
+- Project-group and faculty hierarchy mapping
+- Submission upload + DOI generation + MinIO persistence
+- Multi-stage approval chain (Guide -> Coordinator -> HOD -> Publish)
+- Semantic search and RAG Q&A integration
 
-- Authentication and role management
-- Submission workflow
-- Review system
-- Publication repository
-- Search functionality
-- AI-based document processing
+Not yet fully implemented in code paths:
 
-**Future enhancements may include:**
-
-- Advanced analytics and reporting dashboards
-- Plagiarism detection
-- Citation analysis
-- Integration with external academic systems (ORCID, CrossRef)
-- Email notification system
-- Mobile-responsive progressive web app
+- Author revision loop with versioned submission history in workflow
+- Full JPA-based review/comment entity persistence (review tables currently provisioned via Exposed)
+- Embargo/scheduling/compliance metadata pipeline
 
 ---
